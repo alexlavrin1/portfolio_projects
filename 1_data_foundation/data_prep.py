@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 
 
 print("Data Preparation Script Started Successfully")
-DATA_PATH = Path(__file__).resolve().parent.parent / "data"
+DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "data_raw"
+PREP_PATH = Path(__file__).resolve().parent.parent / "data" / "data_prep"
 PLOTS_PATH = Path(__file__).resolve().parent / "variable_dist"
 
 BAR_COLOR = "#2a78d6"
@@ -40,7 +41,7 @@ t_category_name_translation = pd.read_csv(DATA_PATH/"product_category_name_trans
 tables = {
             "customers": t_customers,
             "Locations":t_geolocation,
-            "Order times": t_order_items,
+            "Order items": t_order_items,
             "Payments" : t_order_payments, 
             "Reviews":t_order_reviews,
             "Orders": t_orders,
@@ -228,6 +229,57 @@ def check_orphans(tables, relationships):
     return pd.DataFrame(rows).set_index(["parent", "child"])
 
 
+MISSING_TRANSLATIONS = {
+    "pc_gamer": "pc_gamer",
+    "portateis_cozinha_e_preparadores_de_alimentos": "portable_kitchen_and_food_preparers",
+    "unknown": "unknown",
+}
+# rough bounding box of Brazil; points outside it are typos in the coordinates
+BRAZIL_LAT = (-35, 6)
+BRAZIL_LNG = (-75, -33)
+
+
+def fix_translation(translation):
+    """Add the categories that products use but the translation table is missing, plus "unknown"."""
+    missing = [name for name in MISSING_TRANSLATIONS if name not in set(translation["product_category_name"])]
+    new_rows = pd.DataFrame({
+        "product_category_name": missing,
+        "product_category_name_english": [MISSING_TRANSLATIONS[name] for name in missing],
+    })
+    return pd.concat([translation, new_rows], ignore_index=True)
+
+
+def fix_products(products):
+    """Fill the missing categories with "unknown" so these products stay in the analysis."""
+    products = products.copy()
+    products["product_category_name"] = products["product_category_name"].fillna("unknown")
+    return products
+
+
+def fix_locations(geolocation):
+    """Drop points outside Brazil, then keep one row per zip with the median lat/lng."""
+    in_brazil = (
+        geolocation["geolocation_lat"].between(*BRAZIL_LAT)
+        & geolocation["geolocation_lng"].between(*BRAZIL_LNG)
+    )
+    return (
+        geolocation[in_brazil]
+        .groupby("geolocation_zip_code_prefix", as_index=False)
+        .agg(geolocation_lat=("geolocation_lat", "median"), geolocation_lng=("geolocation_lng", "median"))
+    )
+
+
+def save_tables(tables, folder):
+    """Save every table as a CSV named after its key ("Order items" -> order_items.csv) and return the paths."""
+    folder.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name, table in tables.items():
+        path = folder / f"{name.lower().replace(' ', '_')}.csv"
+        table.to_csv(path, index=False)
+        paths.append(path)
+    return paths
+
+
 summary = summarize_tables(tables)
 print(summary.to_string())
 
@@ -240,7 +292,7 @@ candidate_keys = [
     ("customers", "customer_id"),
     ("Locations", "geolocation_zip_code_prefix"),
     ("Locations", ["geolocation_zip_code_prefix", "geolocation_lat", "geolocation_lng"]),
-    ("Order times", ["order_id", "order_item_id"]),
+    ("Order items", ["order_id", "order_item_id"]),
     ("Payments", ["order_id", "payment_sequential"]),
     ("Reviews", ["review_id", "order_id"]),
     ("Orders", "order_id"),
@@ -253,17 +305,29 @@ print(check_unique_keys(tables, candidate_keys).to_string())
 
 relationships = [
     ("customers", "customer_id", "Orders", "customer_id"),
-    ("Orders", "order_id", "Order times", "order_id"),
+    ("Orders", "order_id", "Order items", "order_id"),
     ("Orders", "order_id", "Payments", "order_id"),
     ("Orders", "order_id", "Reviews", "order_id"),
-    ("Products", "product_id", "Order times", "product_id"),
-    ("Sellers", "seller_id", "Order times", "seller_id"),
+    ("Products", "product_id", "Order items", "product_id"),
+    ("Sellers", "seller_id", "Order items", "seller_id"),
     ("Locations", "geolocation_zip_code_prefix", "customers", "customer_zip_code_prefix"),
     ("Locations", "geolocation_zip_code_prefix", "Sellers", "seller_zip_code_prefix"),
     ("Category Name", "product_category_name", "Products", "product_category_name"),
 ]
 print("\n=== Orphans ===")
 print(check_orphans(tables, relationships).to_string())
+
+fixed_tables = {
+    **tables,
+    "Category Name": fix_translation(t_category_name_translation),
+    "Products": fix_products(t_products),
+    "Locations": fix_locations(t_geolocation),
+}
+print("\n=== Orphans after fixing the lookup tables ===")
+print(check_orphans(fixed_tables, relationships).to_string())
+
+saved = save_tables(fixed_tables, PREP_PATH)
+print(f"\nSaved {len(saved)} tables to {PREP_PATH}")
 
 for name, table in tables.items():
     for column_name in table.columns:

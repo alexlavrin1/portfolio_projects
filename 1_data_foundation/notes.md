@@ -1,3 +1,15 @@
+## EDA ANALYSIS 
+
+Identification of variables: 
+day_sales : calculates the total paid per that day across all orders 
+day_orders : calculates the number of orders done per that day and also plots number of items per that day 
+
+**Time grain** we use daily for day_ and monthly for monthly for month_
+
+
+
+
+
 Unique identifiers of each table-row
 customers: customer_id
 locations: geolocation_zip_code_prefix (only after cleaning; the raw table repeats each zip many times)

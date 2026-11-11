@@ -1,3 +1,9 @@
 # Data files (keep README)
 data/*
 !data/README.md
+
+# Environment and generated files
+.venv/
+__pycache__/
+.DS_Store
+1_data_foundation/profiling_reports/
